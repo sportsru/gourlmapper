@@ -1,9 +1,11 @@
 package main
 
 import (
-	"flag"
 	"github.com/garyburd/redigo/redis"
 	"github.com/sdming/mcache"
+
+	"errors"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +14,7 @@ import (
 )
 
 var redisServer = flag.String("server", "127.0.0.1:6379", "Redis server to connect to")
+var redisEnabled = flag.Bool("redis", false, "enable Redis storage")
 var httpPort = flag.String("p", ":8080", "listen port")
 var hPort = flag.String("hp", "", "host post (useful for development)")
 var urlMapFile = flag.String("f", "", "url map file in required format")
@@ -29,6 +32,9 @@ const (
 // <redir_code> <space> <target_url>
 const FIELDS_COUNT = 2
 const cacheTime = time.Second * 15
+
+// const
+var localCacheMiss = errors.New("Local cache miss")
 
 var hostsMap map[string]string
 var Pool *redis.Pool
@@ -75,6 +81,7 @@ func (rI *RequestInfo) handleRequest(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	rI.log += " [host: " + r.Host + "]"
 
 	res, err := rI.getRedir(prefix, reqUrl)
 	if err != nil {
@@ -102,8 +109,9 @@ func (rI *RequestInfo) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rI *RequestInfo) getRedir(prefix, url string) (*RedirData, error) {
-	if localStorage != nil {
-		store, found := localStorage[prefix]
+	refStore := localStorage // avoid concurrency
+	if refStore != nil {
+		store, found := refStore[prefix]
 		if found {
 			res, found := store[url]
 			if found {
@@ -113,6 +121,10 @@ func (rI *RequestInfo) getRedir(prefix, url string) (*RedirData, error) {
 		}
 		rI.log += " *local miss* "
 	}
+	if !*redisEnabled {
+		return nil, localCacheMiss
+	}
+
 	key := prefix + ":" + url
 	return rI.getCacheRedisRedir(key)
 }
@@ -151,7 +163,7 @@ func (rI *RequestInfo) getRedisRedir(key string) (*RedirData, error) {
 	redisData, err := redis.String(redisConn.Do("GET", key))
 	redisEnd = time.Now()
 	if err != nil {
-		// TODO: check nil err 
+		// TODO: check nil err
 		log.Println("redis error", err)
 		return nil, err
 	}
@@ -184,27 +196,30 @@ func init() {
 	if len(*urlMapFile) > 0 {
 		go readUrlMapFileWorker(*urlMapFile)
 	}
+
+	if *redisEnabled {
+		Pool = &redis.Pool{
+			MaxActive:   1000,
+			MaxIdle:     3,
+			IdleTimeout: 240 * time.Second,
+			Dial: func() (redis.Conn, error) {
+				d, _ := time.ParseDuration("250ms")
+				c, err := redis.DialTimeout("tcp", *redisServer, d, d, d)
+				if err != nil {
+					log.Println("Redis: connection error")
+					return nil, err
+				}
+				return c, err
+			},
+			TestOnBorrow: func(c redis.Conn, t time.Time) error {
+				_, err := c.Do("PING")
+				return err
+			},
+		}
+	}
 }
 
 func main() {
-	Pool = &redis.Pool{
-		MaxActive:   1000,
-		MaxIdle:     3,
-		IdleTimeout: 240 * time.Second,
-		Dial: func() (redis.Conn, error) {
-			d, _ := time.ParseDuration("250ms")
-			c, err := redis.DialTimeout("tcp", *redisServer, d, d, d)
-			if err != nil {
-				log.Println("Redis: connection error")
-				return nil, err
-			}
-			return c, err
-		},
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			_, err := c.Do("PING")
-			return err
-		},
-	}
 
 	http.Handle("/", &RedirHttpHandler{})
 	http.ListenAndServe(*httpPort, nil)
