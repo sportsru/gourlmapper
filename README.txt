@@ -1,5 +1,5 @@
 About:
-------
+------------
 
 gourlmapper – simple and fast service for url mapping with nginx & redis
 (support internal/external redirects)
@@ -18,12 +18,12 @@ Supported redirect types:
 
 Use storages:
 * local – file slurped in memory (be careful with it's size) for fast permanent mapping (optional)
-* redis (for dynamic urls), redis values caches locally for efficiency (required, TODO: optional)
+* redis (for dynamic urls), redis values caches locally for efficiency (optional)
 
 Support mutiply hosts, but map "host -> prefix" hardcoded in sources (TODO: move to config)
 
 Usage:
--------
+------------
 
    ./gourlmapper -h
 
@@ -32,13 +32,15 @@ Example:
     GOMAXPROCS=2 ./gourlmapper -f gen_map.txt
 
 Environment
-------
+------------
 
- - install Redis (redis.io)
+ – create/generate url's map file
+or/and :
+ - install Redis (redis.io) *optional*
+ – add keys in redis 
+
  – install and setup nginx
  - configure nginx
- – add keys in redis
- – *optional* create/generate url's map file
 
 Local file format:
 -------------------
@@ -139,10 +141,9 @@ available hosts hardcoded in `gourlmapper/main.go` by map `hostsMap`
 TODO:
 ----------------
 
-- optional redis
-- add statistic
-- test, check go test -race 
-
-
+- add statistics in expvar
+- test, check with 'go build -race' produced binary
+- memory profiling
+- benchmarking
 
 

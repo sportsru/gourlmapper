@@ -5,6 +5,7 @@ import (
 	"github.com/sdming/mcache"
 
 	"errors"
+	"expvar"
 	"flag"
 	"log"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 	"time"
 )
 
+// expvar params
+var numCalls = expvar.NewInt("calls_num")
+var totalTime = expvar.NewInt("calls_time_total")
+
+// command line params
 var redisServer = flag.String("server", "127.0.0.1:6379", "Redis server to connect to")
 var redisEnabled = flag.Bool("redis", false, "enable Redis storage")
 var httpPort = flag.String("p", ":8080", "listen port")
@@ -41,7 +47,7 @@ var Pool *redis.Pool
 var Cache *mcache.MCache
 
 type RedirHttpHandler struct {
-	requests int64
+	// requests int64
 	// TODO:
 	// redis_hits
 	// redis_miss
@@ -65,15 +71,17 @@ func (*RedirHttpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	delta := time.Now().Sub(startTime)
 	ms := int64(delta / time.Microsecond)
+
 	log.Println(reqInfo.log,
 		" Stat: redis", reqInfo.redisTime, "total", ms, "micro sec (10^-6sec) ")
+	numCalls.Add(1)
+	totalTime.Add(int64(delta))
 }
 
 func (rI *RequestInfo) handleRequest(w http.ResponseWriter, r *http.Request) {
 	_ = Cache
 
 	reqUrl := r.URL.Path
-	// TODO: process trailing slashes
 
 	prefix, found := hostsMap[r.Host]
 	if !found {
@@ -110,6 +118,10 @@ func (rI *RequestInfo) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 func (rI *RequestInfo) getRedir(prefix, url string) (*RedirData, error) {
 	refStore := localStorage // avoid concurrency
+
+	// process trailing slashes
+	url = strings.TrimRight(url, "/")
+
 	if refStore != nil {
 		store, found := refStore[prefix]
 		if found {
